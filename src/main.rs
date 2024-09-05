@@ -12,6 +12,7 @@ mod CoreFunctions;
 
 //Test string: x:[0,1,3.1419]:sin(x)*(cos(x)*(x+2*x^2))+sin(x)/(cos(x)*(x+2x^2))+2^x-4
 //Test string: x:[0,1,2,3]:sin(x)/((1+x)^2)-(2+x)^2+1.1^x
+//Answer should be [EvalVec([-3.0, -7.689632253798026, -14.688966952574923, -23.660179999496258])]
 //Test string full: x:[4,6,2pi]:sin(x)*(cos(x)*(x+x))+sin(x)*(cos(x)*(x+x))+x^x-x
 //Test string simple: x:[1,2]:(2+x*(x+1)+x+(x))/2
 ///Note: parens have to be around division blocks for accurate order of operations ie f(x)/g(x)
@@ -60,12 +61,24 @@ pub enum StdFunctions {
     Divide = -2,
     Power = -1,
     NumberOfBinaryFuncs = 5, //Note that this discriminator is reserved, and has to be referred to a
-    Sin = 1,                 //null function in the list of functions
-    Cos = 2,
-    Variable = 10,
-    E = 11, //mathematical constant e. These are in a special category of no-input functions, imp later.
+    Sin = 1,                 //null function in the list of functions. If I make too many unitary
+    Cos = 2,                 //functions, they can be shifted in index to go from NumberofBinaryFuncs
+    Variable = 10,           //to the upper limit.
+    //Mathematical constants, these can be implemented later. Enum discriminiator can be made large
+    //to keep them out of the way if necessary.
+    E = 11, //mathematical constant e
     Pi = 12, //mathematical constant pi
 }
+
+#[derive(Clone, EnumString, Debug, PartialEq)]
+pub enum EvalTypes {
+    //to access stored val {if Some_placeholder(x)}
+    None, //Can I hold function handles in enums? Yes!
+    EvalVec(Vec<f64>),
+    Const(f64),
+    SomeEnum(StdFunctions),
+}
+
 //Test string full: x:[4,6,2pi]:sin(x)(cos(x)(x+2x^2))+sin(x)(cos(x)(x+2x^2))+e^x-4
 pub fn recursive_eval(
     expression: &mut Vec<String>,
@@ -178,8 +191,6 @@ pub fn recursive_eval(
         StdFunctions::Power,
     ];
 
-    let zipped_len = zipped_vector.len();
-
     let mut intermediate_vec: Vec<EvalTypes> =
         eval_type_of_operator(zipped_vector, first_ops, false);
     intermediate_vec = eval_type_of_operator(intermediate_vec, second_ops, true);
@@ -198,25 +209,36 @@ pub fn recursive_eval(
     (soln_vec)[0].clone()
 }
 
+///Iterate through the indices Vec<EvalTypes> and perform the list of operations. The bool isbinary
+/// determines if we are working with a binary(isbinary=true) or unitary(isbinary=false) operation.
+/// Returns a Vec<EvalTypes> with these operations completed.
 pub fn eval_type_of_operator(
     eval_vec: Vec<EvalTypes>,
     operations: Vec<StdFunctions>,
     isbinary: bool,
 ) -> Vec<EvalTypes> {
+    //working_vec contains the current proposed calculation. intermediate_vec contains output.
     let mut working_vec: Vec<EvalTypes> = Vec::default();
     let mut intermediate_vec: Vec<EvalTypes> = Vec::default();
     let eval_len = eval_vec.len();
     let mut ind_iter = (0usize..eval_len).into_iter();
+
     if isbinary == true {
+        //If possible, construct an evaluation vector
         while let Some(i) = ind_iter.next() {
             if let Some(next_guy) = eval_vec.get(i + 1).to_owned() {
                 if let Some(nnext_guy) = eval_vec.get(i + 2).to_owned() {
                     working_vec = vec![eval_vec[i].clone(), next_guy.clone(), nnext_guy.clone()];
                     println!("Working Vec is {:?}", working_vec);
+                    //Check if the second element of the working_vec is a standard function, and
+                    //if it is in the list of functions we wish to evaluate. If it is not a function
+                    //enum variant, convert_to_StdFn returns StdFunctions::None.
                     if operations.contains(&working_vec[1].convert_to_StdFn()) {
                         working_vec.eval_enum();
                         println!("working vec after eval: {working_vec:?}");
                         intermediate_vec.append(&mut working_vec);
+                        //If evaluation is done, skip the next two positions as they have been
+                        //consumed by the operation.
                         ind_iter.next();
                         ind_iter.next();
                     } else {
@@ -253,7 +275,8 @@ pub fn eval_type_of_operator(
 }
 
 ///Parses a string by splitting on any input list and returning the members of the input list
-/// as part of the string. If do_enums is true then replace operations with their enum names.
+/// as part of the string. If do_enums is true then replace operations with their enum names
+/// and varname with "Variable".
 pub fn parse_on_parens(
     input_string: &str,
     char_list: Vec<&str>,
@@ -290,6 +313,8 @@ pub fn parse_on_parens(
     output_vec
 }
 
+///Takes &str and, if relevant, converts it to a valid StdFunctions enum variant name. This permits
+/// us to use strum utilities to extract enum variants from the string slices.
 pub fn convert_string_to_enum(input: &str, check: bool, varname: String) -> &str {
     if check {
         match input {
@@ -308,16 +333,18 @@ pub fn convert_string_to_enum(input: &str, check: bool, varname: String) -> &str
     }
 }
 
-///Takes a Vec of tuples (usize,usize) and returns a vec<usize>  its complement as well as a
-/// mapping vector to determine where to use each. Mapping vector will have a "use top" where we use
-/// a top level paren index and a "use outside" where we use an outside of paren evaluation.
-
+///Takes a Vec inds of tuples (usize,usize) and returns a vec<usize>. Returned vector contains the
+///complement of the usize pairs in inds explicitly as a vector of usize. Additionally returns
+/// a mapping vector of Strings which indicates how to interlace the complement vector and original
+/// inds pairs to reproduce the structure of inds with all complemement indexes filled in.
 pub fn fill_inds(inds: Vec<(usize, usize)>, total_len: usize) -> (Vec<usize>, Vec<String>) {
     let mut inds_iter = inds.iter().peekable();
     let mut working_vec: Vec<usize> = Vec::default();
     let mut output: Vec<usize> = Vec::default();
     let mut mapping_vector: Vec<String> = Vec::default();
 
+    //Edge cases to fill in what comes before the first usize pair in inds, or fill in the whole
+    //index set if the set of inds is empty.
     if inds.is_empty() {
         working_vec = (0usize..total_len).collect();
         output.append(&mut working_vec);
@@ -327,7 +354,9 @@ pub fn fill_inds(inds: Vec<(usize, usize)>, total_len: usize) -> (Vec<usize>, Ve
         mapping_vector = vec!["use outside".to_string(); working_vec.len()];
         output = working_vec;
     }
-
+    //iterate through inds, determine if the usize tuples leave space for a complement between them.
+    //Concurrently construct a mapping vector to capture the relationships between the complement
+    //and the usize tuples.
     while let Some(member) = inds_iter.next() {
         //output.push(*member);
         mapping_vector.push("use top".to_string());
@@ -340,8 +369,8 @@ pub fn fill_inds(inds: Vec<(usize, usize)>, total_len: usize) -> (Vec<usize>, Ve
             };
         }
     }
-
-    //if output.last().unwrap().1<(total_len-1){output.push((output.last().unwrap().1+1usize,total_len-1usize))};}
+    //Handle anything not captured in the iteration, where the final tuple in inds does not cover
+    //the entire Vec of calculations.
     if let Some(Guy) = inds.last() {
         if Guy.1 < (total_len - 1) {
             output.append(&mut (inds.last().unwrap().1 + 1usize..total_len).collect());
@@ -355,6 +384,9 @@ pub fn fill_inds(inds: Vec<(usize, usize)>, total_len: usize) -> (Vec<usize>, Ve
     (output, mapping_vector)
 }
 
+///Function to take two Vec's and zip them based on a mapping vector. Mapping vector must have format
+/// using Strings "use top" and "use outside". May later generalize this notation and use a Vec of
+/// binary values to make this utility function usable in more generic settings.
 fn NicksZipper(
     topside: Vec<EvalTypes>,
     outside: Vec<EvalTypes>,
@@ -387,38 +419,47 @@ fn NicksZipper(
     final_vec
 }
 
-///trait to implement checking if a tuple (usize,usize) defines a valid slice
+///trait to implement checking if a tuple (usize,usize) defines a valid parentheses pair
 trait pair_bool {
     fn is_val_ind(&self) -> bool;
 }
 
-trait Makef64 {
-    fn to_f64_Nick(&self) -> f64;
+///Trait to evaluate a vector of EvalTypes
+trait enum_eval {
+    fn eval_enum(&mut self);
 }
 
-trait Evaltypes_To_StdFn {
-    fn convert_to_StdFn(&self) -> StdFunctions;
+///Trait to strip empty strings from a vector of string slices
+trait can_strip_empties {
+    fn strip_empties(&self) -> Vec<&str>;
 }
 
-/*impl Evaltypes_To_StdFn_old for EvalTypes{
-    fn convert_to_StdFn(&self) -> StdFunctions {
-        let EvalTypes::SomeEnum(std_functions) = &self else {panic!("Wrong Eval Type! (In convert_to_StdFn)")};
-        *std_functions
-    }
-}*/
-
-impl Evaltypes_To_StdFn for EvalTypes {
-    fn convert_to_StdFn(&self) -> StdFunctions {
-        println!("Check function convert: {:?}", self);
-        if let EvalTypes::SomeEnum(guy) = &self {
-            *guy
-        } else {
-            StdFunctions::None
+///Removes empty &str from a vector of &str
+impl can_strip_empties for Vec<&str> {
+    fn strip_empties(&self) -> Vec<&str> {
+        let mut output: Vec<&str> = Vec::default();
+        for s in self.into_iter() {
+            if s.is_empty() {
+            } else {
+                output.push(s)
+            };
         }
+        output
     }
 }
 
-impl Makef64 for StdFunctions {
+///implementation of pair_bool to check if a boolean of usizes defines a valid parentheses
+impl pair_bool for (usize, usize) {
+    ///Check if a tuple of B=(usize,usize) defines a valid parentheses pair.
+    fn is_val_ind(&self) -> bool {
+        (*&self.1 as i32) - (*&self.0 as i32) > 0
+    }
+}
+
+///Converts an EvalType to either its discriminant in StdFunctions, or NAN if it is not of the valid
+/// variant. NAN is returned to make if statements with inequalities automatically false. This
+/// discriminant value is not used in any calculations, so there is no risk of NAN propagation.
+impl StdFunctions {
     fn to_f64_Nick(&self) -> f64 {
         match &self {
             StdFunctions::None => f64::NAN,
@@ -427,38 +468,32 @@ impl Makef64 for StdFunctions {
     }
 }
 
-trait enum_eval {
-    fn eval_enum(&mut self);
-    // Add functionality to check if something is a binary or unitary operation, then call
-    //appropriate method in trait. Add trait to check if it's in the binary operations list,
-    //if not use same syntax and call with optional/dummy variable for unitary, return left
-    //operation for next iteration
-}
-
-///Must be called on a length three vector of enums
-trait is_valid_enumeval {
-    fn check_enum_validity(&mut self) -> Vec<EvalTypes>;
-}
-
+///Implementation of enum evaluation for vectors of enum types.
 impl enum_eval for Vec<EvalTypes> {
     ///Accepts a vector of eval types between length two and three. If the vector is of length 2,
-    ///check if the operation is unitary. If not, return the vector and the parser will try again.
+    ///check if the operation is unitary. Next, check if the vector is a valid binary operation.
+    /// If neither, do not modify the Vec.
     fn eval_enum(&mut self) {
-        // vector of enum types will always have len three,
-        // may require padding
         let check_self = &self;
+        //Declare all available function names in the order determined by the descriminants of
+        //StdFunctions. Note that I would like to move this information into a global variable
+        //which is generated on runtime to reduce the number of locations where this information
+        //must be contained and modified if additional functions are added. Global variables would be
+        //a vector of function handles, and a vector of associated enums.
         let avail_bin_fns: Vec<fn(Vec<f64>, Vec<f64>) -> Vec<f64>> =
-            vec![Add, Subtract_Nick, Multiply, Divide, Power]; // REORDER MEEEEE
+            vec![Add, Subtract_Nick, Multiply, Divide, Power];
         let avail_un_fns: Vec<fn(Vec<f64>) -> Vec<f64>> = vec![Sin_Nick, Cos_Nick];
-        println!("Check_self: {:?}", check_self);
+        //In the case of a unitary operation, first element should be the SomeEnum variant and the
+        //second should be the EvalTypes variant. If the input string was incorrectly formatted
+        //there will be a panic here from an inappropriate conversion. Note that if the first element
+        //is not a function, convert)to_StdFn will return NAN rendering the inequality false.
+        //Subsequent case works the same way for binary functions with appropriate changes.
         if (check_self[0].convert_to_StdFn().to_f64_Nick()) > 0f64 {
             type my_func = fn(Vec<f64>) -> Vec<f64>;
-            println!(
-                "Check function convert: {:?}",
-                self.clone()[0].convert_to_StdFn().to_f64_Nick()
-            );
             let current_fn: my_func =
                 avail_un_fns[self.clone()[0].convert_to_StdFn().to_f64_Nick() as usize - 1usize];
+            //^This converts the discriminant of a StdFunction variant to a function handle based on
+            //the list of unitary function handles above.
             *self = vec![EvalVec(current_fn(self[1].extract_val()))]
         } else if (check_self[1].convert_to_StdFn().to_f64_Nick() < 0f64) && (check_self.len() > 2)
         {
@@ -476,49 +511,30 @@ impl enum_eval for Vec<EvalTypes> {
 }
 
 impl EvalTypes {
+    ///Extract the value of the EvalVec variant of EvalTypes. If a functional type is passed, code
+    /// calls a panic as this implies the input was incorrectly formatted.
     fn extract_val(&self) -> Vec<f64> {
         let EvalVec(out_vec) = &self else {
             panic!("Wrong Eval Type! (In extract_val)")
         };
         out_vec.clone()
     }
-}
-
-///implementation of pair_bool
-impl pair_bool for (usize, usize) {
-    ///Check if a tuple of B=(usize,usize) defines a valid string slice.
-    /// returns bool B.1-B.0>0
-    fn is_val_ind(&self) -> bool {
-        (*&self.1 as i32) - (*&self.0 as i32) > 0
+    ///Extract the StdFunction variant from the SomeEnum variant of EvalTypes. If the type is
+    /// inappropriate, return the StdFunctions::None variant.
+    fn convert_to_StdFn(&self) -> StdFunctions {
+        println!("Check function convert: {:?}", self);
+        if let EvalTypes::SomeEnum(guy) = &self {
+            *guy
+        } else {
+            StdFunctions::None
+        }
     }
 }
 
+///Debugging print utility to save on typing. Also serves as generics practice.
 pub fn dbgprnt<T: Debug>(x: T) {
     println!("{:?}", x);
 }
 
-#[derive(Clone, EnumString, Debug, PartialEq)]
-pub enum EvalTypes {
-    //to access stored val {if Some_placeholder(x)}
-    None, //Can I hold function handles in enums? Yes!
-    EvalVec(Vec<f64>),
-    Const(f64),
-    SomeEnum(StdFunctions),
-}
 
-trait can_strip_empties {
-    fn strip_empties(&self) -> Vec<&str>;
-}
 
-impl can_strip_empties for Vec<&str> {
-    fn strip_empties(&self) -> Vec<&str> {
-        let mut output: Vec<&str> = Vec::default();
-        for s in self.into_iter() {
-            if s.is_empty() {
-            } else {
-                output.push(s)
-            };
-        }
-        output
-    }
-}
