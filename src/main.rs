@@ -1,5 +1,6 @@
 use crate::core_functions::*;
 use crate::EvalTypes::EvalVec;
+use crate::configuration_and_utilities::*;
 use convert_case::{Case, Casing};
 use itertools::*;
 use std::any::Any;
@@ -7,16 +8,20 @@ use std::fmt::Debug;
 use std::io;
 use std::str::FromStr;
 use strum_macros::EnumString;
-
 mod core_functions;
+mod configuration_and_utilities;
 
 //Test string: x:[0,1,3.1419]:sin(x)*(cos(x)*(x+2*x^2))+sin(x)/(cos(x)*(x+2x^2))+2^x-4
 //Test string: x:[0,1,2,3]:sin(x)/((1+x)^2)-(2+x)^2+1.1^x
 //Answer should be [EvalVec([-3.0, -7.689632253798026, -14.688966952574923, -23.660179999496258])]
+//Simple Test String: x:2:x*3-x+1   answer: 5
 //Test string full: x:[4,6,2pi]:sin(x)*(cos(x)*(x+x))+sin(x)*(cos(x)*(x+x))+x^x-x
 //Test string simple: x:[1,2]:(2+x*(x+1)+x+(x))/2
 ///Note: parens have to be around division blocks for accurate order of operations ie f(x)/g(x)
-/// must be entered (f(x))/(g(x))
+/// must be entered (f(x))/(g(x)). Exponentiation is treated with the same order of operations
+/// as multiplication and division and all three will be evaluated from left to right.
+/// If you have a potentially ambiguous statement, use parentheses such as x^(2*4) rather than
+/// x^2*4.
 fn main() {
     println!("Enter your equation: ");
 
@@ -51,7 +56,7 @@ fn main() {
 
 #[derive(EnumString, Clone, Copy, Debug, Default, PartialEq)]
 pub enum StdFunctions {
-    // Negative discriminant are binary functions, positive are unitary functions
+    // Negative discriminant are binary functions, positive are unary functions
     #[default]
     None, //needs to be 0
     Add = -5,
@@ -60,7 +65,7 @@ pub enum StdFunctions {
     Divide = -2,
     Power = -1,
     NumberOfBinaryFns = 5, //Note that this discriminator is reserved, and has to be referred to a
-    Sin = 1,                 //null function in the list of functions. If I make too many unitary
+    Sin = 1,                 //null function in the list of functions. If I make too many unary
     Cos = 2,                 //functions, they can be shifted in index to go from NumberOfBinaryFns
     Variable = 10,           //to the upper limit.
     //Mathematical constants, these can be implemented later. Enum discriminant can be made large
@@ -129,10 +134,6 @@ pub fn recursive_eval(
         if member.is_val_ind()
         //&&!was_empty
         {
-            println!(
-                "Sent to recursion: {:?}",
-                loc_expression[member.0..=member.1].to_vec()
-            );
             enums_vec_top[i] = recursive_eval(
                 &mut loc_expression[member.0..=member.1].to_vec(),
                 var_name,
@@ -172,8 +173,15 @@ pub fn recursive_eval(
     ];
 
     let mut intermediate_vec: Vec<EvalTypes> =
-        eval_type_of_operator(zipped_vector, first_ops, false);
-    intermediate_vec = eval_type_of_operator(intermediate_vec, second_ops, true);
+        eval_type_of_operator(zipped_vector, &UNARY_ENUMS.to_vec(), false);
+    intermediate_vec = eval_type_of_operator(intermediate_vec, &BINARY_FIRST_ENUMS.to_vec(), true);
+    /*intermediate_vec=eval_type_of_operator(intermediate_vec,&BINARY_SECOND_ENUMS.to_vec(),true);
+    intermediate_vec[0].clone()*/
+
+    //All calculations need to be done like this. eval_enum needs to evaluate the last members of a
+    //vector and append them to the remaining in place, taking an argument for which type of evaluation
+    //it is doing ie unary, vs binary and where in the order of operations it is. Can simply take the
+    //static arrays to do this.
 
     let mut inter_iter = intermediate_vec.iter();
     soln_vec.push(inter_iter.next().unwrap().to_owned());
@@ -188,11 +196,11 @@ pub fn recursive_eval(
 }
 
 ///Iterate through the indices Vec<EvalTypes> and perform the list of operations. The bool is_binary
-/// determines if we are working with a binary(is_binary=true) or unitary(is_binary=false) operation.
+/// determines if we are working with a binary(is_binary=true) or unary(is_binary=false) operation.
 /// Returns a Vec<EvalTypes> with these operations completed.
 pub fn eval_type_of_operator(
     eval_vec: Vec<EvalTypes>,
-    operations: Vec<StdFunctions>,
+    operations: &Vec<StdFunctions>,
     is_binary: bool,
 ) -> Vec<EvalTypes> {
     //working_vec contains the current proposed calculation. intermediate_vec contains output.
@@ -200,20 +208,20 @@ pub fn eval_type_of_operator(
     let mut intermediate_vec: Vec<EvalTypes> = Vec::default();
     let eval_len = eval_vec.len();
     let mut ind_iter = (0usize..eval_len).into_iter();
-
+    println!("Operations list: {:?}", operations);
+    println!("What we are evaluating: {:?}",eval_vec);
     if is_binary == true {
         //If possible, construct an evaluation vector
         while let Some(i) = ind_iter.next() {
             if let Some(next_guy) = eval_vec.get(i + 1).to_owned() {
                 if let Some(n_next_guy) = eval_vec.get(i + 2).to_owned() {
                     working_vec = vec![eval_vec[i].clone(), next_guy.clone(), n_next_guy.clone()];
-                    println!("Working Vec is {:?}", working_vec);
                     //Check if the second element of the working_vec is a standard function, and
                     //if it is in the list of functions we wish to evaluate. If it is not a function
                     //enum variant, convert_to_StdFn returns StdFunctions::None.
+                    println!("This should be the operation: {:?}", working_vec[1]);
                     if operations.contains(&working_vec[1].to_std_fn()) {
                         working_vec.eval_enum();
-                        println!("working vec after eval: {working_vec:?}");
                         intermediate_vec.append(&mut working_vec);
                         //If evaluation is done, skip the next two positions as they have been
                         //consumed by the operation.
@@ -227,17 +235,15 @@ pub fn eval_type_of_operator(
                 }
             } else {
                 intermediate_vec.push(eval_vec[i].to_owned());
-            }
-            println!("Intermediate Vec: {:?}", intermediate_vec);
+            }println!("Working Vec: {:?}",working_vec);
+            println!("How it's going: {:?}", intermediate_vec);
         }
     } else {
         while let Some(i) = ind_iter.next() {
             if let Some(next_guy) = eval_vec.get(i + 1).to_owned() {
                 working_vec = vec![eval_vec[i].clone(), next_guy.clone()];
-                println!("Working Vec is {:?}", working_vec);
                 if operations.contains(&working_vec[0].to_std_fn()) {
                     working_vec.eval_enum();
-                    println!("working vec after eval: {working_vec:?}");
                     intermediate_vec.append(&mut working_vec);
                     ind_iter.next();
                 } else {
@@ -246,7 +252,6 @@ pub fn eval_type_of_operator(
             } else {
                 intermediate_vec.push(eval_vec[i].to_owned());
             }
-            println!("Intermediate Vec: {:?}", intermediate_vec);
         }
     }
     intermediate_vec
@@ -289,26 +294,6 @@ pub fn parse_on_parens(
     }
     //output_vec.push(working_word);
     output_vec
-}
-
-///Takes &str and, if relevant, converts it to a valid StdFunctions enum variant name. This permits
-/// us to use strum utilities to extract enum variants from the string slices.
-pub fn convert_string_to_enum(input: &str, check: bool, var_name: String) -> &str {
-    if check {
-        match input {
-            "+" => "Add",
-            "/" => "Divide",
-            "-" => "Subtract",
-            "^" => "Power",
-            "*" => "Multiply",
-            "sin" => "Sin",
-            "cos" => "Cos",
-            x if x == var_name => "Variable",
-            _ => input,
-        }
-    } else {
-        input
-    }
 }
 
 ///Takes a Vec ind_tuples of tuples (usize,usize) and returns a vec<usize>. Returned vector contains the
@@ -447,7 +432,7 @@ impl StdFunctions {
 ///Implementation of enum evaluation for vectors of enum types.
 impl EnumEval for Vec<EvalTypes> {
     ///Accepts a vector of eval types between length two and three. If the vector is of length 2,
-    ///check if the operation is unitary. Next, check if the vector is a valid binary operation.
+    ///check if the operation is unary. Next, check if the vector is a valid binary operation.
     /// If neither, do not modify the Vec.
     fn eval_enum(&mut self) {
         let check_self = &self;
@@ -459,7 +444,7 @@ impl EnumEval for Vec<EvalTypes> {
         let avail_bin_fns: Vec<fn(Vec<f64>, Vec<f64>) -> Vec<f64>> =
             vec![add, subtract_custom, multiply, divide, power];
         let avail_un_fns: Vec<fn(Vec<f64>) -> Vec<f64>> = vec![sin_custom, cos_custom];
-        //In the case of a unitary operation, first element should be the SomeEnum variant and the
+        //In the case of a unary operation, first element should be the SomeEnum variant and the
         //second should be the EvalTypes variant. If the input string was incorrectly formatted
         //there will be a panic here from an inappropriate conversion. Note that if the first element
         //is not a function, convert)to_StdFn will return NAN rendering the inequality false.
@@ -469,7 +454,7 @@ impl EnumEval for Vec<EvalTypes> {
             let current_fn: MyFunc =
                 avail_un_fns[self.clone()[0].to_std_fn().to_f64() as usize - 1usize];
             //^This converts the discriminant of a StdFunction variant to a function handle based on
-            //the list of unitary function handles above.
+            //the list of unary function handles above.
             *self = vec![EvalVec(current_fn(self[1].extract_val()))]
         } else if (check_self[1].to_std_fn().to_f64() < 0f64) && (check_self.len() > 2)
         {
@@ -485,6 +470,47 @@ impl EnumEval for Vec<EvalTypes> {
         }
     }
 }
+
+/*impl EnumEval for Vec<EvalTypes> {
+    ///Accepts a vector of eval types between length two and three. If the vector is of length 2,
+    ///check if the operation is unary. Next, check if the vector is a valid binary operation.
+    /// If neither, do not modify the Vec.
+    fn eval_enum(&mut self) {
+        let check_self = &self;
+        //Declare all available function names in the order determined by the discriminants of
+        //StdFunctions. Note that I would like to move this information into a global variable
+        //which is generated on runtime to reduce the number of locations where this information
+        //must be contained and modified if additional functions are added. Global variables would be
+        //a vector of function handles, and a vector of associated enums.
+        let avail_bin_fns: Vec<fn(Vec<f64>, Vec<f64>) -> Vec<f64>> =
+            vec![add, subtract_custom, multiply, divide, power];
+        let avail_un_fns: Vec<fn(Vec<f64>) -> Vec<f64>> = vec![sin_custom, cos_custom];
+        //In the case of a unary operation, first element should be the SomeEnum variant and the
+        //second should be the EvalTypes variant. If the input string was incorrectly formatted
+        //there will be a panic here from an inappropriate conversion. Note that if the first element
+        //is not a function, convert)to_StdFn will return NAN rendering the inequality false.
+        //Subsequent case works the same way for binary functions with appropriate changes.
+        if (check_self[0].to_std_fn().to_f64()) > 0f64 {
+            type MyFunc = fn(Vec<f64>) -> Vec<f64>;
+            let current_fn: MyFunc =
+                avail_un_fns[self.clone()[0].to_std_fn().to_f64() as usize - 1usize];
+            //^This converts the discriminant of a StdFunction variant to a function handle based on
+            //the list of unary function handles above.
+            *self = vec![EvalVec(current_fn(self[1].extract_val()))]
+        } else if (check_self[1].to_std_fn().to_f64() < 0f64) && (check_self.len() > 2)
+        {
+            type MyFunc = fn(Vec<f64>, Vec<f64>) -> Vec<f64>;
+            let current_fn: MyFunc =
+                avail_bin_fns[(self.clone()[1].to_std_fn().to_f64()
+                    + (StdFunctions::NumberOfBinaryFns as i32 as f64))
+                    as usize];
+            *self = vec![EvalVec(current_fn(
+                self[0].extract_val(),
+                self[2].extract_val(),
+            ))]
+        }
+    }
+}*/
 
 impl EvalTypes {
     ///Extract the value of the EvalVec variant of EvalTypes. If a functional type is passed, code

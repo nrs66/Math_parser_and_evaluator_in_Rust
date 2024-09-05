@@ -1,5 +1,4 @@
 pub fn add(input1: Vec<f64>, input2: Vec<f64>) -> Vec<f64> {
-    println!("Function inputs: {:?}, {:?}", input1, input2);
     let vec_len = input1.len();
     let mut out_vec: Vec<f64> = Vec::default();
     for i in 0..vec_len {
