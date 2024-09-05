@@ -457,8 +457,8 @@ impl EnumEval for Vec<EvalTypes> {
         //must be contained and modified if additional functions are added. Global variables would be
         //a vector of function handles, and a vector of associated enums.
         let avail_bin_fns: Vec<fn(Vec<f64>, Vec<f64>) -> Vec<f64>> =
-            vec![Add, Subtract_Nick, Multiply, Divide, Power];
-        let avail_un_fns: Vec<fn(Vec<f64>) -> Vec<f64>> = vec![Sin_Nick, Cos_Nick];
+            vec![add, subtract_custom, multiply, divide, power];
+        let avail_un_fns: Vec<fn(Vec<f64>) -> Vec<f64>> = vec![sin_custom, cos_custom];
         //In the case of a unitary operation, first element should be the SomeEnum variant and the
         //second should be the EvalTypes variant. If the input string was incorrectly formatted
         //there will be a panic here from an inappropriate conversion. Note that if the first element
