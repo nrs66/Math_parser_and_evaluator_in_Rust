@@ -1,5 +1,6 @@
 use crate::configuration_and_utilities::*;
 use crate::EvalTypes::EvalVec;
+use crate::string_and_vec_parsing::*;
 use convert_case::{Case, Casing};
 use std::fmt::Debug;
 use std::io;
@@ -7,6 +8,7 @@ use std::str::FromStr;
 use strum_macros::EnumString;
 mod configuration_and_utilities;
 mod core_functions;
+mod string_and_vec_parsing;
 
 //Test string: x:[0,1,3.1419]:sin(x)*(cos(x)*(x+2*x^2))+sin(x)/(cos(x)*(x+2x^2))+2^x-4
 //Test string: x:[0,1,2,3]:sin(x)/((1+x)^2)-(2+x)^2+1.1^x  OR  x:2:sin(x)/((1+x)^2)-(2+x)^2+1.1^x
@@ -87,6 +89,7 @@ pub enum EvalTypes {
     Fun(StdFunctions), //Holds member of StdFunctions which map to function handles
 }
 
+///Main call, recursively evaluates
 pub fn recursive_eval(
     expression: &mut Vec<String>,
     var_name: &String,
@@ -216,45 +219,6 @@ pub fn recursive_eval(
     }
 }
 
-///Parses a string by splitting on any input list and returning the members of the input list
-/// as part of the string. If do_enums is true then replace operations with their enum names
-/// and var_name with "Variable".
-pub fn parse_on_parens(
-    input_string: &str,
-    char_list: Vec<&str>,
-    do_enums: bool,
-    var_name: &str,
-) -> Vec<String> {
-    let mut working_word: String = String::new();
-    let mut output_vec: Vec<String> = vec![];
-
-    for c in input_string.chars() {
-        if char_list.contains(&&c.to_string().as_str()) {
-            if !working_word.is_empty() {
-                output_vec.push(
-                    convert_string_to_enum(working_word.as_str(), do_enums, var_name.to_string())
-                        .to_string(),
-                );
-                working_word = String::new();
-            }
-            output_vec.push(
-                convert_string_to_enum(&c.to_string(), do_enums, var_name.to_string()).to_string(),
-            )
-        } else {
-            working_word.push_str(c.to_string().as_str())
-        }
-    }
-
-    if !working_word.is_empty() {
-        output_vec.push(
-            convert_string_to_enum(working_word.as_str(), do_enums, var_name.to_string())
-                .to_string(),
-        )
-    }
-    //output_vec.push(working_word);
-    output_vec
-}
-
 ///Takes a Vec ind_tuples of tuples (usize,usize) and returns a vec<usize>. Returned vector contains the
 ///complement of the usize pairs in ind_tuples explicitly as a vector of usize. Additionally returns
 /// a mapping vector of Strings which indicates how to interlace the complement vector and original
@@ -308,90 +272,6 @@ pub fn fill_indices(
     (output, mapping_vector)
 }
 
-///Function to take two vectors and zip them based on a mapping vector. Mapping vector must have format
-/// using Strings "use top" and "use outside". May later generalize this notation and use a Vec of
-/// binary values to make this utility function usable in more generic settings.
-fn zip_by_map(
-    topside: Vec<EvalTypes>,
-    outside: Vec<EvalTypes>,
-    mapping_vec: Vec<String>,
-) -> Vec<EvalTypes> {
-    let mut final_vec: Vec<EvalTypes> = Vec::default();
-    //let total_len=topside.len()+outside.clone().len();
-    let mut outside_ind: usize = 0usize;
-    let mut topside_ind: usize = 0usize;
-    let mut vec_slice: EvalTypes;
-
-    for mapper in mapping_vec.iter() {
-        match mapper as &str {
-            "use outside" => {
-                vec_slice = (&outside[outside_ind]).clone();
-                final_vec.push(vec_slice);
-                outside_ind += 1;
-            }
-            "use top" => {
-                vec_slice = (&topside[topside_ind]).clone();
-                final_vec.push(vec_slice);
-                topside_ind += 1;
-            }
-            _ => {
-                panic!("Something's wrong at the zipping stage.")
-            }
-        }
-    }
-
-    final_vec
-}
-
-///trait to implement checking if a tuple (usize,usize) defines a valid parentheses pair
-trait PairBool {
-    fn is_val_ind(&self) -> bool;
-}
-
-///Trait to evaluate a vector of EvalTypes
-trait EnumEval {
-    fn eval_enum(&mut self, operations: &Vec<StdFunctions>);
-}
-
-///Trait to strip empty strings from a vector of string slices
-trait CanStripEmpties {
-    fn strip_empties(&self) -> Vec<&str>;
-}
-
-///Removes empty &str from a vector of &str
-impl CanStripEmpties for Vec<&str> {
-    fn strip_empties(&self) -> Vec<&str> {
-        let mut output: Vec<&str> = Vec::default();
-        for s in self.into_iter() {
-            if s.is_empty() {
-            } else {
-                output.push(s)
-            };
-        }
-        output
-    }
-}
-
-///implementation of pair_bool to check if a tuple (usize,usize) defines a valid parentheses
-impl PairBool for (usize, usize) {
-    ///Check if a tuple of B=(usize,usize) defines a valid parentheses pair.
-    fn is_val_ind(&self) -> bool {
-        (*&self.1 as i32) - (*&self.0 as i32) > 0
-    }
-}
-
-///Converts an EvalType to either its discriminant in StdFunctions, or NAN if it is not of the valid
-/// variant. NAN is returned to make if statements with inequalities automatically false. This
-/// discriminant value is not used in any calculations, so there is no risk of NAN propagation.
-impl StdFunctions {
-    fn to_f64(&self) -> f64 {
-        match &self {
-            StdFunctions::None => f64::NAN,
-            _ => *self as i32 as f64,
-        }
-    }
-}
-
 ///Implementation of enum evaluation for vectors of enum types.
 impl EnumEval for Vec<EvalTypes> {
     ///Accepts a vector of eval types between length two and three. If the vector is of length 2,
@@ -403,13 +283,8 @@ impl EnumEval for Vec<EvalTypes> {
         if UNARY_ENUMS.to_vec().contains(&operations[0]) {
             is_binary = false;
         }
-        let check_width: usize;
+        let check_width: usize={if is_binary{3usize} else{2usize}};
         let mut check_self: Vec<EvalTypes> = Vec::default();
-        if is_binary == true {
-            check_width = 3usize;
-        } else {
-            check_width = 2usize;
-        }
         let len_self = self.len();
 
         if len_self <= check_width {
@@ -446,6 +321,36 @@ impl EnumEval for Vec<EvalTypes> {
             let mut holder = self.clone()[0usize..len_self - check_width].to_vec();
             holder.append(&mut check_self);
             *self = holder;
+        }
+    }
+}
+
+///trait to implement checking if a tuple (usize,usize) defines a valid parentheses pair
+trait PairBool {
+    fn is_val_ind(&self) -> bool;
+}
+
+///Trait to evaluate a vector of EvalTypes
+trait EnumEval {
+    fn eval_enum(&mut self, operations: &Vec<StdFunctions>);
+}
+
+///implementation of pair_bool to check if a tuple (usize,usize) defines a valid parentheses
+impl PairBool for (usize, usize) {
+    ///Check if a tuple of B=(usize,usize) defines a valid parentheses pair.
+    fn is_val_ind(&self) -> bool {
+        (*&self.1 as i32) - (*&self.0 as i32) > 0
+    }
+}
+
+///Converts an EvalType to either its discriminant in StdFunctions, or NAN if it is not of the valid
+/// variant. NAN is returned to make if statements with inequalities automatically false. This
+/// discriminant value is not used in any calculations, so there is no risk of NAN propagation.
+impl StdFunctions {
+    fn to_f64(&self) -> f64 {
+        match &self {
+            StdFunctions::None => f64::NAN,
+            _ => *self as i32 as f64,
         }
     }
 }

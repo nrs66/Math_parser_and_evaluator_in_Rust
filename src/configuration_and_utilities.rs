@@ -11,7 +11,6 @@ pub static BINARY_ADDITION_BASED_ENUMS: [StdFunctions;2]=[StdFunctions::Add,StdF
 ///These operations involve addition and will be applied second in the order of operations
 pub static BINARY_HANDLES: [fn(Vec<f64>,Vec<f64>)->Vec<f64>;5]=[add,subtract_custom,multiply,divide,power];
 
-
 ///Takes &str and, if relevant, converts it to a valid StdFunctions enum variant name. This permits
 /// us to use strum utilities to extract enum variants from the string slices.
 pub fn convert_string_to_enum(input: &str, check: bool, var_name: String) -> &str {
