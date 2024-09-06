@@ -30,7 +30,9 @@ fn main() {
     //expression to be evaluated.
     let split_input: Vec<&str> = use_input.split(':').collect();
     if split_input.len() != 3 {
-        panic!("Incorrect Formatting")
+        panic!(
+            "Incorrect Formatting, input should be formatted as: x:2,4:x*3-x+1 or x:[2,4]:x*3-x+1"
+        )
     }
     let var_name: &str = split_input[0];
     let input_vals: &str = split_input[1];
@@ -53,6 +55,8 @@ fn main() {
     println!("{:?}", solution);
 }
 
+///Contains function names whose discriminants can be mapped to the function handles contained
+/// in the statics in configuration_and_utilities
 #[derive(EnumString, Clone, Copy, Debug, Default, PartialEq)]
 pub enum StdFunctions {
     // Negative discriminant are binary functions, positive are unary functions
@@ -60,7 +64,7 @@ pub enum StdFunctions {
     None, //needs to be 0
     Add = -5,
     Subtract = -4,
-    Multiply = -3, //Note this is going to need to be re-ordered in the function list!
+    Multiply = -3, //Binary operations are negative, add NumberOfBinaryFunctions to map to handles
     Divide = -2,
     Power = -1,
     NumberOfBinaryFns = 5, //Note that this discriminator is reserved, and has to be referred to a
@@ -73,12 +77,14 @@ pub enum StdFunctions {
     Pi = 12, //mathematical constant pi
 }
 
+///Eval types can store a StdFunction and a evaluation vector (just a Vec<f64>) variant. These
+/// can be stored together in a vector to make flattened mathematical expressions.
 #[derive(Clone, EnumString, Debug, PartialEq)]
 pub enum EvalTypes {
     //to access stored val {if Some_placeholder(x)}
     None,
-    EvalVec(Vec<f64>),      //Holds vector of f64 for calculation by StdFunctions
-    SomeEnum(StdFunctions), //Holds member of StdFunctions which map to function handles
+    EvalVec(Vec<f64>), //Holds vector of f64 for calculation by StdFunctions
+    Fun(StdFunctions), //Holds member of StdFunctions which map to function handles
 }
 
 pub fn recursive_eval(
@@ -86,12 +92,14 @@ pub fn recursive_eval(
     var_name: &String,
     input_vals: &Vec<f64>,
 ) -> EvalTypes {
+    //Extract first and last elements of expression
     let exp_first_last = (
         expression.first().unwrap().to_string(),
         expression.last().unwrap().to_string(),
     );
+    //Strip parentheses, if necessary, and set up a local variable for processing
     let loc_expression = {
-        if (exp_first_last.0 == "(") && (exp_first_last.1 == ")") {
+        if exp_first_last == ("(".to_string(), ")".to_string()) {
             let exp_len = expression.len();
             expression[1..exp_len - 1].to_vec()
         } else {
@@ -99,20 +107,25 @@ pub fn recursive_eval(
         }
     };
 
-    //Gather parentheses groups based on logical imputation. ((f(x))+g(x)) returns first and last index
+    //Gather parentheses groups based on nesting. ((f(x))+g(x)) would create a bool containing the
+    //indices of the first and last parentheses, and the nested parentheses will be handled on a
+    //recursive call.
     let mut top_level_parens: Vec<(usize, usize)> = Vec::default();
     let mut working_ind_tuple: (usize, usize) = (0, 0);
     let mut paren_counter: (i32, i32) = (0, 0);
     let mut is_counting = false;
+    let mut total_parens:i32=0;
 
     for (i, member) in loc_expression.clone().into_iter().enumerate() {
         if member == "(" {
+            total_parens+=1;
             paren_counter.0 += 1;
             if is_counting == false {
                 working_ind_tuple.0 = i;
                 is_counting = true;
             }
         } else if member == ")" {
+            total_parens+=1;
             paren_counter.1 += 1;
             if paren_counter.0 == paren_counter.1 {
                 is_counting = false;
@@ -123,16 +136,22 @@ pub fn recursive_eval(
         }
     }
 
+    if total_parens%2 ==1 {
+        panic!("Parentheses mismatch, check your formatting!")
+    }
+
+    //Gets the indices for things outside of parentheses for later evaluation. Also sets mapping_vec,
+    //which records the relationship between the nested parentheses groups and what is outside of them
     let (outside_parens, mapping_vec) =
         fill_indices(top_level_parens.clone(), loc_expression.len());
 
     let mut enums_vec_top: Vec<EvalTypes> = vec![EvalTypes::None; top_level_parens.len()]; // to store, nums_vec[i]=Some(x:f64)
     let mut enums_vec_outside: Vec<EvalTypes> = vec![EvalTypes::None; outside_parens.len()];
 
+    //Recursive call, passes in nested parentheses slices of the evaluation expression. Stores final
+    //output of nested parentheses calculation as a vector of Vec<f64> eval types.
     for (i, member) in top_level_parens.into_iter().enumerate() {
-        if member.is_val_ind()
-        //&&!was_empty
-        {
+        if member.is_val_ind() {
             enums_vec_top[i] = recursive_eval(
                 &mut loc_expression[member.0..=member.1].to_vec(),
                 var_name,
@@ -143,6 +162,9 @@ pub fn recursive_eval(
         }
     }
 
+    //Convert Strings at indices outside of parens into EvalTypes enum variants. Variable names
+    //and numbers are converted into Vec<f64> and stored as EvalVec variants, and functions are stored
+    //as Fun variant.
     for (i, member) in outside_parens.into_iter().enumerate() {
         //to fix need to iterate through each index BETWEEN member
         let match_var = (&loc_expression[member]).as_str();
@@ -152,15 +174,18 @@ pub fn recursive_eval(
         } else if match_var == "Variable" {
             enums_vec_outside[i] = EvalVec(input_vals.clone())
         } else {
-            enums_vec_outside[i] = EvalTypes::SomeEnum(
+            enums_vec_outside[i] = EvalTypes::Fun(
                 StdFunctions::from_str(match_var.to_case(Case::UpperCamel).as_str()).unwrap(),
             )
         }
     }
 
+    //Zips things that were inside parens with things that were outside parens based on the
+    //mapping_vec. zipped_vector is a vector of EvalType variants which will be evaluated.
     let zipped_vector: Vec<EvalTypes> = zip_by_map(enums_vec_top, enums_vec_outside, mapping_vec);
 
-    //Evaluate unary functions first
+    //Evaluate unary functions first. Note that eval_enum operates on vector in place, evaluating
+    //the last two or three elements based on operation type and leaving the rest untouched
     let mut zipped_iter = zipped_vector.iter();
     let mut intermediate_vec_1: Vec<EvalTypes> = Vec::default();
     intermediate_vec_1.push(zipped_iter.next().unwrap().to_owned());
@@ -184,7 +209,11 @@ pub fn recursive_eval(
         soln_vec.push(member.to_owned());
         soln_vec.eval_enum(&BINARY_ADDITION_BASED_ENUMS.to_vec());
     }
-    soln_vec[0].clone()
+    if soln_vec.len() == 1 {
+        soln_vec[0].clone()
+    } else {
+        panic!("Input was improperly formatted!")
+    }
 }
 
 ///Parses a string by splitting on any input list and returning the members of the input list
@@ -404,8 +433,8 @@ impl EnumEval for Vec<EvalTypes> {
         } else if !is_binary && check_self.len() == 2 {
             if operations.contains(&check_self[0].to_std_fn()) {
                 type MyFunc = fn(Vec<f64>) -> Vec<f64>;
-                let current_fn: MyFunc =
-                    UNARY_HANDLES.to_vec()[check_self.clone()[0].to_std_fn().to_f64() as usize - 1usize];
+                let current_fn: MyFunc = UNARY_HANDLES.to_vec()
+                    [check_self.clone()[0].to_std_fn().to_f64() as usize - 1usize];
                 //^This converts the discriminant of a StdFunction variant to a function handle based on
                 //the list of unary function handles above.
                 check_self = vec![EvalVec(current_fn(check_self[1].extract_val()))];
@@ -433,7 +462,7 @@ impl EvalTypes {
     ///Extract the StdFunction variant from the SomeEnum variant of EvalTypes. If the type is
     /// inappropriate, return the StdFunctions::None variant.
     fn to_std_fn(&self) -> StdFunctions {
-        if let EvalTypes::SomeEnum(guy) = &self {
+        if let EvalTypes::Fun(guy) = &self {
             *guy
         } else {
             StdFunctions::None
