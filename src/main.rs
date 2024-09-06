@@ -1,6 +1,6 @@
 use crate::configuration_and_utilities::*;
-use crate::EvalTypes::EvalVec;
 use crate::string_and_vec_parsing::*;
+use crate::EvalTypes::EvalVec;
 use convert_case::{Case, Casing};
 use std::fmt::Debug;
 use std::io;
@@ -30,31 +30,34 @@ fn main() {
 
     //Split inputs on colons, split_input handles the variable name, the input vector and the
     //expression to be evaluated.
-    let split_input: Vec<&str> = use_input.split(':').collect();
-    if split_input.len() != 3 {
-        panic!(
+    if use_input.to_lowercase() != "cancel"||use_input.to_lowercase()!="exit" {
+        let split_input: Vec<&str> = use_input.split(':').collect();
+        if split_input.len() != 3 {
+            panic!(
             "Incorrect Formatting, input should be formatted as: x:2,4:x*3-x+1 or x:[2,4]:x*3-x+1"
         )
+        }
+        let var_name: &str = split_input[0];
+        let input_vals: &str = split_input[1];
+        let expression_string = split_input[2];
+
+        let mut split_vals: Vec<&str> = vec!["(", ")", "*", "-", "+", "^", "/"];
+        let x: Vec<&str> = input_vals.split(&['[', ']', ',']).collect();
+        let input_vals: Vec<f64> = x
+            .strip_empties()
+            .iter()
+            .map(|x| (*x).parse().unwrap())
+            .collect();
+        split_vals.push(var_name);
+
+        let mut expression: Vec<String> =
+            parse_on_parens(expression_string, split_vals, true, var_name);
+
+        let solution = recursive_eval(&mut expression, &input_vals).extract_val();
+        println!("{:?}", solution);
+    } else {
+        println!("Evaluation canceled.")
     }
-    let var_name: &str = split_input[0];
-    let input_vals: &str = split_input[1];
-    let expression_string = split_input[2];
-
-    let mut split_vals: Vec<&str> = vec!["(", ")", "*", "-", "+", "^", "/"];
-    let x: Vec<&str> = input_vals.split(&['[', ']', ',']).collect();
-    let input_vals: Vec<f64> = x
-        .strip_empties()
-        .iter()
-        .map(|x| (*x).parse().unwrap())
-        .collect();
-    split_vals.push(var_name);
-
-    let mut expression: Vec<String> =
-        parse_on_parens(expression_string, split_vals, true, var_name);
-
-    let solution =
-        recursive_eval(&mut expression, &(var_name.to_string()), &input_vals).extract_val();
-    println!("{:?}", solution);
 }
 
 ///Contains function names whose discriminants can be mapped to the function handles contained
@@ -90,11 +93,7 @@ pub enum EvalTypes {
 }
 
 ///Main call, recursively evaluates
-pub fn recursive_eval(
-    expression: &mut Vec<String>,
-    var_name: &String,
-    input_vals: &Vec<f64>,
-) -> EvalTypes {
+pub fn recursive_eval(expression: &mut [String], input_vals: &Vec<f64>) -> EvalTypes {
     //Extract first and last elements of expression
     let exp_first_last = (
         expression.first().unwrap().to_string(),
@@ -117,18 +116,18 @@ pub fn recursive_eval(
     let mut working_ind_tuple: (usize, usize) = (0, 0);
     let mut paren_counter: (i32, i32) = (0, 0);
     let mut is_counting = false;
-    let mut total_parens:i32=0;
+    let mut total_parens: i32 = 0;
 
     for (i, member) in loc_expression.clone().into_iter().enumerate() {
         if member == "(" {
-            total_parens+=1;
+            total_parens += 1;
             paren_counter.0 += 1;
-            if is_counting == false {
+            if !is_counting {
                 working_ind_tuple.0 = i;
                 is_counting = true;
             }
         } else if member == ")" {
-            total_parens+=1;
+            total_parens += 1;
             paren_counter.1 += 1;
             if paren_counter.0 == paren_counter.1 {
                 is_counting = false;
@@ -139,7 +138,7 @@ pub fn recursive_eval(
         }
     }
 
-    if total_parens%2 ==1 {
+    if total_parens % 2 == 1 {
         panic!("Parentheses mismatch, check your formatting!")
     }
 
@@ -157,7 +156,6 @@ pub fn recursive_eval(
         if member.is_val_ind() {
             enums_vec_top[i] = recursive_eval(
                 &mut loc_expression[member.0..=member.1].to_vec(),
-                var_name,
                 input_vals,
             );
         } else {
@@ -170,7 +168,7 @@ pub fn recursive_eval(
     //as Fun variant.
     for (i, member) in outside_parens.into_iter().enumerate() {
         //to fix need to iterate through each index BETWEEN member
-        let match_var = (&loc_expression[member]).as_str();
+        let match_var = loc_expression[member].as_str();
         if match_var.parse::<f64>().is_ok() {
             enums_vec_outside[i] =
                 EvalVec(vec![match_var.parse::<f64>().unwrap(); input_vals.len()]);
@@ -189,29 +187,24 @@ pub fn recursive_eval(
 
     //Evaluate unary functions first. Note that eval_enum operates on vector in place, evaluating
     //the last two or three elements based on operation type and leaving the rest untouched
-    let mut zipped_iter = zipped_vector.iter();
     let mut intermediate_vec_1: Vec<EvalTypes> = Vec::default();
-    intermediate_vec_1.push(zipped_iter.next().unwrap().to_owned());
-    while let Some(member) = zipped_iter.next() {
+    for member in zipped_vector {
         intermediate_vec_1.push(member.to_owned());
-        intermediate_vec_1.eval_enum(&UNARY_ENUMS.to_vec());
+        intermediate_vec_1.eval_enum(UNARY_ENUMS.as_ref());
     }
     //Next in the order of operations do, from left to right, all operations involving multiplication
     let mut intermediate_vec_2: Vec<EvalTypes> = Vec::default();
-    let mut inter_iter_1 = intermediate_vec_1.iter();
-    intermediate_vec_2.push(inter_iter_1.next().unwrap().to_owned());
-    while let Some(member) = inter_iter_1.next() {
+    for member in intermediate_vec_1 {
         intermediate_vec_2.push(member.to_owned());
-        intermediate_vec_2.eval_enum(&BINARY_MULTIPLICATION_BASED_ENUMS.to_vec());
+        intermediate_vec_2.eval_enum(BINARY_MULTIPLICATION_BASED_ENUMS.as_ref());
     }
     //Finally do addition and subtraction from left to right
-    let mut inter_iter_2 = intermediate_vec_2.iter();
     let mut soln_vec: Vec<EvalTypes> = Vec::default();
-    soln_vec.push(inter_iter_2.next().unwrap().to_owned());
-    while let Some(member) = inter_iter_2.next() {
+    for member in intermediate_vec_2 {
         soln_vec.push(member.to_owned());
-        soln_vec.eval_enum(&BINARY_ADDITION_BASED_ENUMS.to_vec());
+        soln_vec.eval_enum(BINARY_ADDITION_BASED_ENUMS.as_ref());
     }
+
     if soln_vec.len() == 1 {
         soln_vec[0].clone()
     } else {
@@ -228,7 +221,7 @@ pub fn fill_indices(
     total_len: usize,
 ) -> (Vec<usize>, Vec<String>) {
     let mut ind_tuples_iter = ind_tuples.iter().peekable();
-    let mut working_vec: Vec<usize> = Vec::default();
+    let mut working_vec: Vec<usize>;
     let mut output: Vec<usize> = Vec::default();
     let mut mapping_vector: Vec<String> = Vec::default();
 
@@ -249,7 +242,7 @@ pub fn fill_indices(
     while let Some(member) = ind_tuples_iter.next() {
         mapping_vector.push("use top".to_string());
         if let Some(member2) = ind_tuples_iter.peek() {
-            if member.1 < { (*member2).0 - 1 } {
+            if member.1 < { member2.0 - 1 } {
                 working_vec = ((member.1 + 1)..member2.0).collect();
                 let working_len = working_vec.len();
                 output.append(&mut working_vec);
@@ -277,13 +270,19 @@ impl EnumEval for Vec<EvalTypes> {
     ///Accepts a vector of eval types between length two and three. If the vector is of length 2,
     ///check if the operation is unary. Next, check if the vector is a valid binary operation.
     /// If neither, do not modify the Vec.
-    fn eval_enum(&mut self, operations: &Vec<StdFunctions>) {
+    fn eval_enum(&mut self, operations: &[StdFunctions]) {
         //Determine the length of vector slice to perform operation on
         let mut is_binary: bool = true;
         if UNARY_ENUMS.to_vec().contains(&operations[0]) {
             is_binary = false;
         }
-        let check_width: usize={if is_binary{3usize} else{2usize}};
+        let check_width: usize = {
+            if is_binary {
+                3usize
+            } else {
+                2usize
+            }
+        };
         let mut check_self: Vec<EvalTypes> = Vec::default();
         let len_self = self.len();
 
@@ -295,8 +294,7 @@ impl EnumEval for Vec<EvalTypes> {
 
         if is_binary && check_self.len() == 3 {
             if operations.contains(&check_self[1].to_std_fn()) {
-                type MyFunc = fn(Vec<f64>, Vec<f64>) -> Vec<f64>;
-                let current_fn: MyFunc =
+                let current_fn: Binop =
                     BINARY_HANDLES.to_vec()[(check_self.clone()[1].to_std_fn().to_f64()
                         + (StdFunctions::NumberOfBinaryFns as i32 as f64))
                         as usize];
@@ -305,15 +303,15 @@ impl EnumEval for Vec<EvalTypes> {
                     check_self[2].extract_val(),
                 ))]
             }
-        } else if !is_binary && check_self.len() == 2 {
-            if operations.contains(&check_self[0].to_std_fn()) {
-                type MyFunc = fn(Vec<f64>) -> Vec<f64>;
-                let current_fn: MyFunc = UNARY_HANDLES.to_vec()
-                    [check_self.clone()[0].to_std_fn().to_f64() as usize - 1usize];
-                //^This converts the discriminant of a StdFunction variant to a function handle based on
-                //the list of unary function handles above.
-                check_self = vec![EvalVec(current_fn(check_self[1].extract_val()))];
-            }
+        } else if !is_binary
+            && check_self.len() == 2
+            && operations.contains(&check_self[0].to_std_fn())
+        {
+            let current_fn: Unop = UNARY_HANDLES.to_vec()
+                [check_self.clone()[0].to_std_fn().to_f64() as usize - 1usize];
+            //^This converts the discriminant of a StdFunction variant to a function handle based on
+            //the list of unary function handles above.
+            check_self = vec![EvalVec(current_fn(check_self[1].extract_val()))];
         }
         if len_self <= check_width {
             *self = check_self
@@ -332,14 +330,14 @@ trait PairBool {
 
 ///Trait to evaluate a vector of EvalTypes
 trait EnumEval {
-    fn eval_enum(&mut self, operations: &Vec<StdFunctions>);
+    fn eval_enum(&mut self, operations: &[StdFunctions]);
 }
 
 ///implementation of pair_bool to check if a tuple (usize,usize) defines a valid parentheses
 impl PairBool for (usize, usize) {
     ///Check if a tuple of B=(usize,usize) defines a valid parentheses pair.
     fn is_val_ind(&self) -> bool {
-        (*&self.1 as i32) - (*&self.0 as i32) > 0
+        (self.1 as i32) - (self.0 as i32) > 0
     }
 }
 
@@ -347,10 +345,10 @@ impl PairBool for (usize, usize) {
 /// variant. NAN is returned to make if statements with inequalities automatically false. This
 /// discriminant value is not used in any calculations, so there is no risk of NAN propagation.
 impl StdFunctions {
-    fn to_f64(&self) -> f64 {
-        match &self {
+    fn to_f64(self) -> f64 {
+        match self {
             StdFunctions::None => f64::NAN,
-            _ => *self as i32 as f64,
+            _ => self as i32 as f64,
         }
     }
 }

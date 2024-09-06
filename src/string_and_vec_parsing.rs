@@ -14,7 +14,7 @@ pub fn parse_on_parens(
     let mut output_vec: Vec<String> = vec![];
 
     for c in input_string.chars() {
-        if char_list.contains(&&c.to_string().as_str()) {
+        if char_list.contains(&c.to_string().as_str()) {
             if !working_word.is_empty() {
                 output_vec.push(
                     convert_string_to_enum(working_word.as_str(), do_enums, var_name.to_string())
@@ -49,7 +49,7 @@ pub trait CanStripEmpties {
 impl CanStripEmpties for Vec<&str> {
     fn strip_empties(&self) -> Vec<&str> {
         let mut output: Vec<&str> = Vec::default();
-        for s in self.into_iter() {
+        for s in self.iter() {
             if s.is_empty() {
             } else {
                 output.push(s)
@@ -76,7 +76,7 @@ pub fn zip_by_map(
     for mapper in mapping_vec.iter() {
         match mapper as &str {
             "use outside" => {
-                vec_slice = (&outside[outside_ind]).clone();
+                vec_slice = outside[outside_ind].clone();
                 final_vec.push(vec_slice);
                 outside_ind += 1;
             }
