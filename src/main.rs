@@ -60,28 +60,6 @@ fn main() {
     }
 }
 
-///Contains function names whose discriminants can be mapped to the function handles contained
-/// in the statics in configuration_and_utilities
-#[derive(EnumString, Clone, Copy, Debug, Default, PartialEq)]
-pub enum StdFunctions {
-    // Negative discriminant are binary functions, positive are unary functions
-    #[default]
-    None, //needs to be 0
-    Add = -5,
-    Subtract = -4,
-    Multiply = -3, //Binary operations are negative, add NumberOfBinaryFunctions to map to handles
-    Divide = -2,
-    Power = -1,
-    NumberOfBinaryFns = 5, //Note that this discriminator is reserved, and has to be referred to a
-    Sin = 1,               //null function in the list of functions. If I make too many unary
-    Cos = 2,               //functions, they can be shifted in index to go from NumberOfBinaryFns
-    Variable = 10,         //to the upper limit.
-    //Mathematical constants, these can be implemented later. Enum discriminant can be made large
-    //to keep them out of the way if necessary.
-    E = 11,  //mathematical constant e
-    Pi = 12, //mathematical constant pi
-}
-
 ///Eval types can store a StdFunction and a evaluation vector (just a Vec<f64>) variant. These
 /// can be stored together in a vector to make flattened mathematical expressions.
 #[derive(Clone, EnumString, Debug, PartialEq)]
